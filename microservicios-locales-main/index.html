@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Microservicios Locales</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+
+        h1, h2 { color: #2c3e50; }
+        ul { list-style: none; padding: 0; }
+        
+        /* Estilos de las listas de servicios y solicitudes */
+        li {
+            background: #ecf0f1;
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .service-info { flex-grow: 1; }
+        .actions button { margin-left: 10px; padding: 5px 10px; }
+
+        /* Estilos de formularios */
+        form {
+            margin: 15px 0; padding: 10px;
+            background: #fff; border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        input {
+            padding: 8px; margin: 5px 5px 10px 0;
+            border-radius: 5px; border: 1px solid #ccc;
+        }
+        button {
+            padding: 8px 15px; background-color: #2980b9;
+            color: #fff; border: none; border-radius: 5px; cursor: pointer;
+        }
+        button:hover { background-color: #3498db; }
+
+        /* Estilos del mapa */
+        #mapa {
+            margin-top: 20px; border: 2px solid #2980b9;
+            border-radius: 8px; height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Servicios disponibles</h1>
+    <ul id="listaServicios"></ul>
+
+    <h2>Crear solicitud</h2>
+    <form id="formSolicitud">
+        <input type="text" name="usuario" placeholder="Tu nombre" required>
+        <input type="text" name="servicio" placeholder="Servicio que necesitas" required>
+        <button type="submit">Enviar Solicitud</button>
+    </form>
+
+    <h2>Agregar nuevo servicio (con Geolocalización)</h2>
+    <form id="formServicio">
+        <input type="text" name="nombre" placeholder="Nombre del servicio" required>
+        <input type="text" name="direccion" placeholder="Dirección completa (Ej: Av. Reforma 100, CDMX)" required>
+        <input type="text" name="descripcion" placeholder="Descripción del servicio" required>
+        <button type="submit">Agregar Servicio</button>
+    </form>
+        
+    <h2>Administración de Servicios</h2>
+    <form id="formEditarServicio" style="display: none;">
+        <h3>Editar Servicio <span id="editId"></span></h3>
+        <input type="hidden" name="id" id="editIdInput">
+        <input type="text" name="editNombre" placeholder="Nombre" required>
+        <input type="text" name="editDireccion" placeholder="Dirección" required>
+        <input type="text" name="editDescripcion" placeholder="Descripción" required>
+        <button type="submit">Guardar Cambios</button>
+        <button type="button" onclick="cerrarEdicion()">Cerrar</button>
+    </form>
+
+    <h2>Solicitudes Recibidas</h2>
+    <ul id="listaSolicitudes">
+        <li>(Cargando solicitudes...)</li>
+    </ul>
+
+    <h2>Mapa de servicios</h2>
+    <div id="mapa"></div>
+
+    <script>
+        // Declaración global de variables de Leaflet
+        let mapa, marcadores; 
+
+        // --- FUNCIONES DE CARGA Y CRUD ---
+        async function cargarServicios() {
+            try {
+                const res = await fetch('http://localhost:3000/servicios');
+                const servicios = await res.json();
+                const lista = document.getElementById('listaServicios');
+                lista.innerHTML = servicios.map(s => `
+                    <li>
+                      <span class="service-info"><b>${s.nombre}</b> - ${s.direccion} (${s.descripcion})</span>
+                      <span class="actions">
+                        <button onclick="iniciarEdicion(${s.id}, '${s.nombre}', '${s.direccion.replace(/'/g, "\\'")}', '${s.descripcion.replace(/'/g, "\\'")}')">Editar</button>
+                        <button onclick="eliminarServicio(${s.id})" style="background-color: #e74c3c;">Eliminar</button>
+                      </span>
+                    </li>`).join('');
+            } catch (error) {
+                console.error("Error al cargar servicios:", error);
+                document.getElementById('listaServicios').innerHTML = '<li>Error al cargar servicios. Verifica el servidor.</li>';
+            }
+        }
+
+        async function mostrarServiciosEnMapa() {
+            if (!mapa) return; 
+            marcadores.clearLayers();
+            try {
+                const res = await fetch('http://localhost:3000/servicios');
+                const servicios = await res.json();
+                servicios.forEach(s => {
+                    if (s.lat && s.lon && s.lat !== 0 && s.lon !== 0) {
+                        L.marker([s.lat, s.lon])
+                            .bindPopup(`<b>${s.nombre}</b><br>${s.descripcion}<br><small>(${s.direccion})</small>`)
+                            .addTo(marcadores);
+                    }
+                });
+            } catch (error) { console.error("Error al mostrar en mapa:", error); }
+        }
+        
+        async function cargarSolicitudes() {
+            try {
+                const res = await fetch('http://localhost:3000/solicitudes');
+                const solicitudes = await res.json();
+                const lista = document.getElementById('listaSolicitudes');
+                lista.innerHTML = solicitudes.length === 0 
+                    ? '<li>Aún no hay solicitudes.</li>'
+                    : solicitudes.map(s => `<li>Usuario: <b>${s.usuario}</b> | Pide: ${s.servicio} (ID: ${s.id})</li>`).join('');
+            } catch (error) {
+                console.error("Error al cargar solicitudes:", error);
+                document.getElementById('listaSolicitudes').innerHTML = '<li>Error al cargar solicitudes. Verifica el servidor.</li>';
+            }
+        }
+
+        // Funciones auxiliares
+        function cerrarEdicion() { document.getElementById('formEditarServicio').style.display = 'none'; }
+        function iniciarEdicion(id, nombre, direccion, descripcion) {
+            const form = document.getElementById('formEditarServicio');
+            form.style.display = 'block';
+            document.getElementById('editId').textContent = `(ID: ${id})`;
+            document.getElementById('editIdInput').value = id;
+            form.editNombre.value = nombre;
+            form.editDireccion.value = direccion;
+            form.editDescripcion.value = descripcion;
+        }
+        async function eliminarServicio(id) {
+            if (!confirm(`¿Estás seguro de que quieres eliminar el servicio con ID ${id}?`)) return;
+            const res = await fetch(`http://localhost:3000/servicios/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (res.ok) {
+                alert(result.message);
+                cargarServicios();
+                mostrarServiciosEnMapa();
+            } else { alert(`❌ Error al eliminar: ${result.error}`); }
+        }
+
+        // --- LISTENERS DE FORMULARIOS ---
+
+        // POST Servicio
+        document.getElementById('formServicio').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const data = { nombre: form.nombre.value, direccion: form.direccion.value, descripcion: form.descripcion.value };
+            try {
+                const res = await fetch('http://localhost:3000/servicios', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+                const result = await res.json();
+                if (res.ok) {
+                    alert(`✅ Servicio agregado! ID: ${result.id}`);
+                    form.reset();
+                    cargarServicios();
+                    mostrarServiciosEnMapa();
+                } else { alert(`❌ Error al agregar servicio: ${result.error || 'Error desconocido'}`); }
+            } catch (error) { alert("❌ Error de conexión con el servidor."); console.error('Error:', error); }
+        });
+
+        // POST Solicitud
+        document.getElementById('formSolicitud').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            console.log("Intentando enviar solicitud POST a http://localhost:3000/solicitudes..."); 
+            const form = e.target;
+            const data = { usuario: form.usuario.value, servicio: form.servicio.value };
+            try {
+                const res = await fetch('http://localhost:3000/solicitudes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+                if (res.ok) {
+                    alert("✅ Solicitud enviada y guardada!");
+                    form.reset();
+                    cargarSolicitudes(); 
+                } else {
+                    const result = await res.json();
+                    alert(`❌ Error al enviar la solicitud: ${result.error || 'Error desconocido'}`);
+                }
+            } catch (error) { alert("❌ Error de conexión al enviar solicitud."); console.error('Error:', error); }
+        });
+        
+        // PUT Servicio
+        document.getElementById('formEditarServicio').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const id = form.id.value;
+            const data = { nombre: form.editNombre.value, direccion: form.editDireccion.value, descripcion: form.editDescripcion.value };
+            const res = await fetch(`http://localhost:3000/servicios/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+            const result = await res.json();
+            if (res.ok) {
+                alert(`✅ Servicio ID ${id} actualizado!`);
+                cerrarEdicion();
+                cargarServicios();
+                mostrarServiciosEnMapa();
+            } else { alert(`❌ Error al actualizar: ${result.error}`); }
+        });
+
+        // --- INICIALIZACIÓN SEGURA ---
+        document.addEventListener('DOMContentLoaded', (event) => {
+            // Inicializar el mapa de forma segura
+            mapa = L.map('mapa').setView([19.432608, -99.133209], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(mapa);
+            marcadores = L.layerGroup().addTo(mapa);
+            
+            // Cargar datos iniciales
+            cargarServicios();
+            mostrarServiciosEnMapa();
+            cargarSolicitudes(); 
+        });
+    </script>
+</body>
+</html>

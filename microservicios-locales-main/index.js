@@ -6,7 +6,7 @@ const axios = require('axios');
 const db = require('./db'); // Asegúrate de que db.js esté correcto
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware (Correcto y NECESARIO para leer JSON)
 app.use(cors());
@@ -24,7 +24,6 @@ app.get('/servicios', (req, res) => {
             console.error(err);
             res.status(500).json({ error: 'Error al obtener servicios' });
         } else {
-            // Deserializar la ubicación para el frontend
             const servicios_con_coords = rows.map(s => {
                 try {
                     const { direccion, lat, lon } = JSON.parse(s.ubicacion);
@@ -47,7 +46,6 @@ app.post('/servicios', async (req, res) => {
     }
 
     try {
-        // Geocodificación con Nominatim
         const nominatim_url = 'https://nominatim.openstreetmap.org/search';
         const geoResponse = await axios.get(nominatim_url, {
             params: { q: direccion, format: 'json', limit: 1 },
@@ -90,7 +88,6 @@ app.put('/servicios/:id', async (req, res) => {
     }
 
     try {
-        // Re-geocodificar la nueva dirección
         const nominatim_url = 'https://nominatim.openstreetmap.org/search';
         const geoResponse = await axios.get(nominatim_url, {
             params: { q: direccion, format: 'json', limit: 1 },
@@ -101,7 +98,6 @@ app.put('/servicios/:id', async (req, res) => {
             const { lat, lon } = geoResponse.data[0];
             const ubicacion_data = JSON.stringify({ direccion, lat: parseFloat(lat), lon: parseFloat(lon) });
 
-            // Actualizar en la base de datos
             db.run(
                 'UPDATE servicios SET nombre = ?, ubicacion = ?, descripcion = ? WHERE id = ?',
                 [nombre, ubicacion_data, descripcion, id],
@@ -142,7 +138,6 @@ app.delete('/servicios/:id', (req, res) => {
     });
 });
 
-
 // 5. OBTENER todas las solicitudes (GET /solicitudes)
 app.get('/solicitudes', (req, res) => {
     db.all('SELECT * FROM solicitudes', (err, rows) => {
@@ -155,11 +150,10 @@ app.get('/solicitudes', (req, res) => {
     });
 });
 
-// 6. CREAR nueva solicitud (POST /solicitudes) - ¡CON DIAGNÓSTICO!
+// 6. CREAR nueva solicitud (POST /solicitudes)
 app.post('/solicitudes', (req, res) => {
     const { usuario, servicio } = req.body;
 
-    // 📢 1. DIAGNÓSTICO: Verificación de datos
     if (!usuario || !servicio) {
         console.error('❌ Error de datos (400): req.body incompleto o vacío. Cuerpo recibido:', req.body);
         return res.status(400).json({ 
@@ -167,30 +161,23 @@ app.post('/solicitudes', (req, res) => {
         });
     }
 
-    // 📢 2. EJECUCIÓN SQL
     db.run(
         'INSERT INTO solicitudes (usuario, servicio) VALUES (?, ?)',
         [usuario, servicio],
         function (err) {
             if (err) {
-                // Si hay un error SQL (ej: NOT NULL constraint fail)
                 console.error('❌ Error SQL (500): No se pudo insertar la solicitud:', err.message);
                 return res.status(500).json({ error: 'Error interno al guardar la solicitud en la base de datos' });
             } 
-            
-            // 📢 3. VERIFICACIÓN DE INSERCIÓN
             if (this.lastID > 0) {
-                 // ÉXITO: Se obtuvo el ID insertado
                 res.json({ id: this.lastID, mensaje: 'Solicitud agregada con éxito' });
             } else {
-                // FALLO SILENCIOSO: No hubo error, pero tampoco se reportó un ID
                 console.error('⚠️ Fallo silencioso: La inserción SQL no reportó un lastID.');
                 return res.status(500).json({ error: 'Fallo al confirmar la inserción en la base de datos.' });
             }
         }
     );
 });
-
 
 // Iniciar servidor
 app.listen(PORT, () => {
